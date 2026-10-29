@@ -1,0 +1,9 @@
+{
+  "name": "claudesync",
+  "description": "Sync CLAUDE.md, skills, agents, commands, rules and settings.json (incl. plugins) across devices via a private git repo. Needs the claudesync binary in PATH.",
+  "author": {
+    "name": "Hudint"
+  },
+  "homepage": "https://github.com/Hudint/claudesync",
+  "license": "MIT"
+}

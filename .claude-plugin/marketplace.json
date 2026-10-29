@@ -1,0 +1,14 @@
+{
+  "name": "claudesync",
+  "owner": {
+    "name": "Hudint"
+  },
+  "description": "claudesync: keep your Claude Code configuration in sync across devices.",
+  "plugins": [
+    {
+      "name": "claudesync",
+      "source": "./plugin",
+      "description": "Keeps your Claude Code configuration in sync across devices: pulls on session start, pushes when settings change."
+    }
+  ]
+}
