@@ -186,7 +186,17 @@ func (a *App) doSync(ctx context.Context, opts SyncOptions) (*Result, error) {
 	if err := a.loadRepoConfig(); err != nil {
 		return nil, err
 	}
-	repoShared := filepath.Join(a.cfg.RepoDir(), sharedDir)
+	if err := a.ensureDevice(); err != nil {
+		return nil, err
+	}
+	if err := a.ensureGitattributes(); err != nil {
+		return nil, err
+	}
+	layers := a.fileLayers()
+	repoFiles, owner, err := a.collectRepo(layers)
+	if err != nil {
+		return nil, err
+	}
 
 	// 1. Capture local changes into the repository working tree.
 	local, warns, err := a.m.collect(a.cfg.ClaudeDir)
@@ -203,12 +213,23 @@ func (a *App) doSync(ctx context.Context, opts SyncOptions) (*Result, error) {
 		if l == b {
 			continue
 		}
-		dst := filepath.Join(repoShared, filepath.FromSlash(rel))
 		if l == "" {
-			if err := removeFile(dst, repoShared); err != nil {
-				return nil, err
+			for _, layer := range layers {
+				if err := removeFile(filepath.Join(layer.dir, filepath.FromSlash(rel)), layer.dir); err != nil {
+					return nil, err
+				}
 			}
-		} else if h, _ := hashFile(dst); h != l {
+			pushed = append(pushed, rel)
+			continue
+		}
+		// Existing files stay in their layer; new ones go into the
+		// highest-priority layer (the first profile, or shared).
+		dest := layers[len(layers)-1]
+		if i, ok := owner[rel]; ok {
+			dest = layers[i]
+		}
+		dst := filepath.Join(dest.dir, filepath.FromSlash(rel))
+		if h := repoFiles[rel].hash; h != l || repoFiles[rel].path != dst {
 			if err := copyFile(local[rel].path, dst); err != nil {
 				return nil, err
 			}
@@ -280,12 +301,13 @@ func unionKeys[V any, W any](a map[string]V, b map[string]W) []string {
 
 // localRel maps a repository path to the local path it came from.
 func localRel(repoPath string) string {
-	if strings.HasPrefix(repoPath, sharedDir+"/") {
-		rel := strings.TrimPrefix(repoPath, sharedDir+"/")
-		if rel == "settings.json" {
-			return "settings.json"
-		}
+	if rel, ok := strings.CutPrefix(repoPath, sharedDir+"/"); ok {
 		return rel
+	}
+	if rest, ok := strings.CutPrefix(repoPath, profilesDir+"/"); ok {
+		if _, rel, ok := strings.Cut(rest, "/"); ok {
+			return rel
+		}
 	}
 	if strings.HasPrefix(repoPath, "os/") || strings.HasPrefix(repoPath, "hosts/") {
 		return "settings.json"
@@ -329,7 +351,7 @@ func (a *App) commit(ctx context.Context, res *Result) (map[string]bool, error) 
 	}
 	if blocked["settings.json"] {
 		// The layers were reverted, so all settings changes are held back.
-		for _, f := range []string{"shared/settings.json", "os/" + a.cfg.OS + ".json", "hosts/" + a.cfg.Host + ".json"} {
+		for _, f := range a.allLayerPaths() {
 			if !held[f] {
 				g.run(ctx, "reset", "-q", "--", f)
 				if _, err := g.run(ctx, "checkout", "HEAD", "--", f); err != nil {
@@ -418,8 +440,7 @@ func (a *App) exchange(parent context.Context, timeout time.Duration, res *Resul
 // apply makes the managed local files match the repository, except for
 // files edited while the sync ran and files held back by the secret scan.
 func (a *App) apply(captured fileSet, settingsRaw []byte, localSettings jsonx.Object, settingsOK bool, blocked map[string]bool, res *Result) error {
-	repoShared := filepath.Join(a.cfg.RepoDir(), sharedDir)
-	repoFiles, _, err := a.m.collect(repoShared)
+	repoFiles, _, err := a.collectRepo(a.fileLayers())
 	if err != nil {
 		return err
 	}
@@ -537,7 +558,7 @@ func (a *App) rebaseline(prefer string) error {
 	if err != nil {
 		return err
 	}
-	repo, _, err := a.m.collect(filepath.Join(a.cfg.RepoDir(), sharedDir))
+	repo, _, err := a.collectRepo(a.fileLayers())
 	if err != nil {
 		return err
 	}
@@ -571,4 +592,40 @@ func (a *App) rebaseline(prefer string) error {
 	a.st.Settings = jsonx.Marshal(base)
 	a.st.Conflict = ""
 	return nil
+}
+
+// gitattributesLines are the merge rules every config repository needs;
+// repositories created by older versions get missing lines appended.
+var gitattributesLines = []string{
+	"* -text",
+	"/shared/settings.json merge=claudesync-json",
+	"/profiles/*/settings.json merge=claudesync-json",
+	"/os/*.json merge=claudesync-json",
+	"/hosts/*.json merge=claudesync-json",
+	"/claudesync.json merge=claudesync-json",
+}
+
+func (a *App) ensureGitattributes() error {
+	p := filepath.Join(a.cfg.RepoDir(), ".gitattributes")
+	cur, err := os.ReadFile(p)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	have := map[string]bool{}
+	for _, l := range strings.Split(string(cur), "\n") {
+		have[strings.TrimSpace(l)] = true
+	}
+	out := string(cur)
+	for _, l := range gitattributesLines {
+		if !have[l] {
+			if out != "" && !strings.HasSuffix(out, "\n") {
+				out += "\n"
+			}
+			out += l + "\n"
+		}
+	}
+	if out == string(cur) {
+		return nil
+	}
+	return os.WriteFile(p, []byte(out), 0o644)
 }

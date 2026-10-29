@@ -20,11 +20,16 @@ var version = "dev"
 const usage = `claudesync keeps your Claude Code configuration in sync across devices.
 
 Usage:
-  claudesync init --repo <owner/name|url> [--create] [--prefer repo|local] [--host <name>] [--no-plugin]
+  claudesync init --repo <owner/name|url> [--create] [--prefer repo|local] [--profile a,b] [--host <name>] [--no-plugin]
   claudesync sync [--quiet] [--offline] [--timeout 60s]
   claudesync status [--fetch]
   claudesync pin [--only-here] <key>   keep a settings value specific to this device
   claudesync unpin <settings.key>      use the shared value again
+  claudesync profile [list]            profiles and their devices
+  claudesync profile use <a[,b]>       put this device into profiles (first wins, new things go there)
+  claudesync profile use --none        leave all profiles
+  claudesync move <path|key> --to <profile|shared>
+  claudesync promote <path|key>        move to shared, so every device gets it
   claudesync resolve --prefer local|repo
   claudesync backups                   list backups taken before overwriting files
   claudesync restore <backup-id>
@@ -88,12 +93,13 @@ func main() {
 		prefer := fs.String("prefer", "repo", "which side wins where both have a value: repo or local")
 		host := fs.String("host", "", "name of this device (default: hostname)")
 		noPlugin := fs.Bool("no-plugin", false, "do not enable the claudesync Claude Code plugin")
+		profile := fs.String("profile", "", "comma-separated profiles for this device (first wins)")
 		fs.Parse(args)
 		if *host != "" {
 			cfg.Host = app.SanitizeHost(*host)
 		}
 		a := newApp(cfg)
-		res, err := a.Init(ctx, app.InitOptions{Repo: *repo, Create: *create, Prefer: *prefer, NoPlugin: *noPlugin})
+		res, err := a.Init(ctx, app.InitOptions{Repo: *repo, Create: *create, Prefer: *prefer, NoPlugin: *noPlugin, Profiles: []string{*profile}})
 		if err != nil {
 			fail(err)
 		}
@@ -152,6 +158,76 @@ func main() {
 		} else {
 			fmt.Printf("%s uses the shared value again.\n", fs.Arg(0))
 		}
+		report(res, false)
+
+	case "profile", "profiles":
+		sub := "list"
+		if len(args) > 0 {
+			sub, args = args[0], args[1:]
+		}
+		switch sub {
+		case "list":
+			a := newApp(cfg)
+			ps, unassigned, err := a.ProfileList()
+			if err != nil {
+				fail(err)
+			}
+			fmt.Printf("this device: %s\n", a.Config().Host)
+			if len(ps) == 0 {
+				fmt.Println("no profiles yet — create one with `claudesync profile use <name>`")
+			}
+			for _, p := range ps {
+				devs := strings.Join(p.Devices, ", ")
+				if devs == "" {
+					devs = "no devices"
+				}
+				fmt.Printf("  %-16s %3d files, %2d settings keys  — %s\n", p.Name, p.Files, p.Settings, devs)
+			}
+			if len(unassigned) > 0 {
+				fmt.Println("devices without a profile:", strings.Join(unassigned, ", "))
+			}
+		case "use":
+			pfs := flag.NewFlagSet("profile use", flag.ExitOnError)
+			none := pfs.Bool("none", false, "leave all profiles")
+			pfs.Parse(args)
+			if !*none && pfs.NArg() == 0 {
+				fail(errors.New("usage: claudesync profile use <name[,name2]> | --none"))
+			}
+			res, err := newApp(cfg).UseProfiles(ctx, pfs.Args(), app.SyncOptions{LockWait: 30 * time.Second})
+			if err != nil {
+				fail(err)
+			}
+			if *none {
+				fmt.Println("this device is in no profile now")
+			} else {
+				fmt.Printf("profiles of %s: %s\n", cfg.Host, strings.Join(pfs.Args(), ","))
+			}
+			report(res, false)
+		default:
+			fail(fmt.Errorf("unknown profile command %q (list, use)", sub))
+		}
+
+	case "move", "promote":
+		to := fs.String("to", "", "target: a profile name or shared")
+		var target string
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			target, args = args[0], args[1:]
+		}
+		fs.Parse(args)
+		if target == "" && fs.NArg() > 0 {
+			target = fs.Arg(0)
+		}
+		if cmd == "promote" {
+			*to = "shared"
+		}
+		if target == "" || *to == "" {
+			fail(errors.New("usage: claudesync move <path|settings.key> --to <profile|shared>"))
+		}
+		res, err := newApp(cfg).Move(ctx, target, *to, app.SyncOptions{LockWait: 30 * time.Second})
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("moved %s to %s\n", target, *to)
 		report(res, false)
 
 	case "resolve":
@@ -239,6 +315,9 @@ func report(res *app.Result, quiet bool) {
 
 func printStatus(s *app.Status) {
 	fmt.Printf("host:      %s\nrepo:      %s\nremote:    %s\n", s.Host, s.Repo, s.Remote)
+	if len(s.Profiles) > 0 {
+		fmt.Printf("profiles:  %s (new files and keys go into %s)\n", strings.Join(s.Profiles, ", "), s.Profiles[0])
+	}
 	if !s.LastSync.IsZero() {
 		fmt.Printf("last sync: %s (%s ago): %s\n", s.LastSync.Format(time.RFC1123), time.Since(s.LastSync).Round(time.Second), s.LastResult)
 	}

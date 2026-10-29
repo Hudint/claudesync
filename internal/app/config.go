@@ -98,6 +98,20 @@ type RepoConfig struct {
 	LocalOnlyKeys *[]string `json:"localOnlyKeys,omitempty"`
 	// SecretAllow lists regular expressions for lines the secret scan accepts.
 	SecretAllow []string `json:"secretAllow,omitempty"`
+	// Devices records every device and the profiles it belongs to.
+	Devices map[string]DeviceConfig `json:"devices,omitempty"`
+}
+
+// DeviceConfig is one device's entry in claudesync.json.
+type DeviceConfig struct {
+	OS string `json:"os,omitempty"`
+	// Profiles in priority order; new files and keys go into the first.
+	Profiles []string `json:"profiles,omitempty"`
+}
+
+func (rc *RepoConfig) profilesFor(host string) []string {
+	ps, _ := splitProfiles(rc.Devices[host].Profiles)
+	return ps
 }
 
 func (rc *RepoConfig) localOnly() []string {

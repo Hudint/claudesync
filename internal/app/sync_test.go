@@ -94,9 +94,9 @@ func (d *device) sync() *Result {
 	return res
 }
 
-func (d *device) init(remote, prefer string) *Result {
+func (d *device) init(remote, prefer string, profiles ...string) *Result {
 	d.t.Helper()
-	res, err := d.app().Init(context.Background(), InitOptions{Repo: remote, Prefer: prefer})
+	res, err := d.app().Init(context.Background(), InitOptions{Repo: remote, Prefer: prefer, Profiles: profiles})
 	if err != nil {
 		d.t.Fatalf("%s init: %v", d.cfg.Host, err)
 	}

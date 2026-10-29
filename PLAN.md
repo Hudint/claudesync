@@ -163,6 +163,18 @@ Stand 2026-10-29: M1–M3 umgesetzt und getestet (`go test ./...`), M4 vorbereit
 5. **Phase 2 (später):** MCP-Server aus `~/.claude.json` (`mcpServers`) mit
    `${VAR}`-Platzhaltern und verschlüsselten Secrets (age), optional Auto-Memory.
 
-## 11. Entschieden
+## 11. Profile (v0.2)
+
+Profile gruppieren Geräte nach Kontext (z. B. `work` = PC + Server, `personal` = MacBook).
+Ebenen pro Gerät: `shared` ← Profile (erstes gewinnt) ← `os/<os>.json` ← `hosts/<host>.json`,
+für Dateien (`profiles/<name>/…`) und `settings.json` (`profiles/<name>/settings.json`).
+
+- Bestehendes bleibt in seiner Ebene; **Neues** landet im ersten Profil des Geräts.
+- `claudesync promote <pfad|key>` / `move … --to <profil|shared>` verschieben.
+- Mitgliedschaft steht in `claudesync.json` unter `devices.<host>.profiles` (alle Geräte
+  registrieren sich dort, `profile list` zeigt sie).
+- Profilwechsel: erst mit alten Profilen syncen, dann umstellen und neu anwenden (Backups).
+
+## 12. Entschieden
 
 - Config-Repo: `Hudint/claude-config` (privat), Tool-Repo: `Hudint/claudesync` (öffentlich)

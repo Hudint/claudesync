@@ -17,6 +17,7 @@ import (
 // Status describes pending work without changing anything.
 type Status struct {
 	Host         string
+	Profiles     []string
 	Repo         string
 	Remote       string
 	LastSync     time.Time
@@ -41,7 +42,7 @@ func (a *App) Status(ctx context.Context, fetch bool) (*Status, error) {
 		return nil, err
 	}
 	s := &Status{
-		Host: a.cfg.Host, Repo: a.cfg.RepoDir(),
+		Host: a.cfg.Host, Profiles: a.profiles(), Repo: a.cfg.RepoDir(),
 		LastSync: a.st.LastSync, LastResult: a.st.LastResult, LastError: a.st.LastError,
 		Conflict: a.st.Conflict, Blocked: a.st.Blocked,
 	}
@@ -234,6 +235,10 @@ func (a *App) Doctor(ctx context.Context) []Check {
 	}
 	if err := a.loadRepoConfig(); err != nil {
 		add(false, "claudesync.json", err.Error())
+	} else if ps := a.profiles(); len(ps) > 0 {
+		add(true, "profiles", strings.Join(ps, ", ")+" (new files and keys go into "+ps[0]+")")
+	} else {
+		add(true, "profiles", "none (everything goes into shared)")
 	}
 	for _, w := range a.warnings {
 		add(false, "claudesync.json", w)
