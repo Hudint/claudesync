@@ -11,7 +11,10 @@ the plugins and marketplaces you installed.
 - **Automatic and bidirectional.** A Claude Code plugin pulls when a session starts
   and pushes when settings change; a timer syncs in the background.
 - **Settings are merged, not copied.** `settings.json` is split into a shared layer,
-  a per-OS layer and a per-device layer, merged key by key.
+  profile layers, a per-OS layer and a per-device layer, merged key by key.
+- **Profiles** group devices by context — say `work` for your PC and server and
+  `personal` for your MacBook — each with its own skills, instructions and settings
+  on top of what all devices share.
 - **Safe by default.** Credentials, sessions, history and `~/.claude.json` never sync;
   `env`, `apiKeyHelper` and similar keys stay on each device; a secret scan holds back
   anything that looks like a token; every overwritten file is backed up first.
@@ -55,13 +58,50 @@ are backed up to `~/.claudesync/backups/`.
 `init` also enables the `claudesync` Claude Code plugin (skip with `--no-plugin`), which
 then syncs to your other devices like any other plugin.
 
+## Profiles
+
+A profile is a group of devices that share a context. Every device sees, from lowest
+to highest priority:
+
+```
+shared  ←  its profiles (first listed wins)  ←  os/<os>.json  ←  hosts/<host>.json
+```
+
+This applies to files (`CLAUDE.md`, skills, agents, …: the highest layer that has a
+file provides it) and to `settings.json` (merged key by key).
+
+```sh
+claudesync init --repo you/claude-config --profile work   # or later:
+claudesync profile use work            # this device joins "work"
+claudesync profile use work,linux      # several profiles; the first wins
+claudesync profile use --none          # back to shared only
+claudesync profile list                # profiles and their devices
+```
+
+**Where changes go:** a file or settings key that already exists stays in the layer it
+comes from (edit a shared `CLAUDE.md` and every device gets the edit). Anything **new** —
+a new skill, a new settings key, a new permission rule — goes into the device's first
+profile, so it stays in that context. Deleting removes it from all of this device's layers.
+
+```sh
+claudesync promote skills/deploy                  # make it available to every device
+claudesync move CLAUDE.md --to personal           # only personal devices get it
+claudesync move permissions.defaultMode --to work # settings keys work too
+```
+
+When a device switches profiles, files that only belonged to the old profile are removed
+locally (backed up first) and the new profile is applied. With no profile, everything goes
+into `shared`, exactly as before.
+
 ## What syncs
 
 | Local (`~/.claude/`) | Repository |
 |---|---|
 | `CLAUDE.md`, `keybindings.json` | `shared/` |
 | `skills/` (not `skills/synced/`), `agents/`, `commands/`, `rules/`, `output-styles/`, `scripts/` | `shared/` |
-| `settings.json` | `shared/settings.json` + `os/<os>.json` + `hosts/<host>.json` |
+| `settings.json` | `shared/settings.json` + `profiles/<name>/settings.json` + `os/<os>.json` + `hosts/<host>.json` |
+
+Profile files live in `profiles/<name>/`, laid out like `shared/`.
 
 **Never synced:** `.credentials.json`, `~/.claude.json` (MCP servers, account state),
 `settings.local.json`, `projects/`, `history.jsonl`, `sessions/`, plugin caches, and the
@@ -76,13 +116,14 @@ for remote MCP servers in the meantime — those are available on every device a
 
 ## How settings merge
 
-A device's `settings.json` is `shared` ← `os/<os>.json` ← `hosts/<host>.json`: objects
+A device's `settings.json` is `shared` ← profiles ← `os/<os>.json` ← `hosts/<host>.json`: objects
 merge by key, arrays such as `permissions.allow` are combined, and other values are
 replaced by the more specific layer.
 
 When you change `settings.json` (by hand, with `/config`, `/model`, a permission
 approval …), only the changed keys go back to the repository — into the layer that already
-defines them, otherwise into `shared`. So a value you pinned stays device-specific:
+defines them, otherwise into the device's first profile (or `shared`). So a value you
+pinned stays device-specific:
 
 ```sh
 claudesync pin model                        # this device keeps its own model
@@ -115,6 +156,8 @@ claudesync resolve --prefer repo    # take the other devices' version
 claudesync sync [--quiet] [--offline]   sync now
 claudesync status [--fetch]             pending changes, last sync, conflicts
 claudesync pin|unpin <key>              device-specific settings values
+claudesync profile list|use             profiles (device groups)
+claudesync move <path|key> --to <p>     move into a profile or shared; promote = --to shared
 claudesync resolve --prefer local|repo  recover from a conflict
 claudesync backups / restore <id>       backups taken before overwriting files
 claudesync install-timer [--interval 5m] / uninstall-timer

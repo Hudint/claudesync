@@ -10,16 +10,30 @@ import (
 )
 
 // layers are the settings.json fragments in the repository. The effective
-// settings of a device are shared, overlaid by its OS, overlaid by its host.
+// settings of a device are shared, overlaid by its profiles (first listed
+// wins), its OS, and finally the device itself.
 type layers struct {
-	shared, os, host jsonx.Object
+	shared   jsonx.Object
+	profiles []jsonx.Object // priority order, like App.profiles()
+	os, host jsonx.Object
 }
 
-func (a *App) layerFiles() (shared, osFile, host string) {
-	r := a.cfg.RepoDir()
-	return filepath.Join(r, sharedDir, "settings.json"),
-		filepath.Join(r, "os", a.cfg.OS+".json"),
-		filepath.Join(r, "hosts", a.cfg.Host+".json")
+// layerPaths returns the repository-relative settings files of this device:
+// shared, profiles (priority order), OS, host.
+func (a *App) layerPaths() (shared string, profiles []string, osFile, host string) {
+	for _, p := range a.profiles() {
+		profiles = append(profiles, profilesDir+"/"+p+"/settings.json")
+	}
+	return sharedDir + "/settings.json", profiles, "os/" + a.cfg.OS + ".json", "hosts/" + a.cfg.Host + ".json"
+}
+
+func (a *App) allLayerPaths() []string {
+	s, ps, o, h := a.layerPaths()
+	return append(append([]string{s}, ps...), o, h)
+}
+
+func (a *App) repoPath(rel string) string {
+	return filepath.Join(a.cfg.RepoDir(), filepath.FromSlash(rel))
 }
 
 func readObject(p string) (jsonx.Object, error) {
@@ -38,16 +52,23 @@ func readObject(p string) (jsonx.Object, error) {
 }
 
 func (a *App) loadLayers() (*layers, error) {
-	s, o, h := a.layerFiles()
+	s, ps, o, h := a.layerPaths()
 	var l layers
 	var err error
-	if l.shared, err = readObject(s); err != nil {
+	if l.shared, err = readObject(a.repoPath(s)); err != nil {
 		return nil, err
 	}
-	if l.os, err = readObject(o); err != nil {
+	for _, p := range ps {
+		obj, err := readObject(a.repoPath(p))
+		if err != nil {
+			return nil, err
+		}
+		l.profiles = append(l.profiles, obj)
+	}
+	if l.os, err = readObject(a.repoPath(o)); err != nil {
 		return nil, err
 	}
-	if l.host, err = readObject(h); err != nil {
+	if l.host, err = readObject(a.repoPath(h)); err != nil {
 		return nil, err
 	}
 	return &l, nil
@@ -70,49 +91,70 @@ func writeObject(p string, o jsonx.Object, keepEmpty bool) error {
 }
 
 func (a *App) saveLayers(l *layers) error {
-	s, o, h := a.layerFiles()
-	if err := writeObject(s, l.shared, true); err != nil {
+	s, ps, o, h := a.layerPaths()
+	if err := writeObject(a.repoPath(s), l.shared, true); err != nil {
 		return err
 	}
-	if err := writeObject(o, l.os, false); err != nil {
+	for i, p := range ps {
+		if err := writeObject(a.repoPath(p), l.profiles[i], false); err != nil {
+			return err
+		}
+	}
+	if err := writeObject(a.repoPath(o), l.os, false); err != nil {
 		return err
 	}
-	return writeObject(h, l.host, false)
+	return writeObject(a.repoPath(h), l.host, false)
 }
 
 // effective returns the merged settings with templates expanded for this
 // device.
 func (a *App) effective(l *layers) jsonx.Object {
-	m := jsonx.Merge(jsonx.Merge(l.shared, l.os), l.host)
+	var m any = l.shared
+	for i := len(l.profiles) - 1; i >= 0; i-- {
+		m = jsonx.Merge(m, l.profiles[i])
+	}
+	m = jsonx.Merge(jsonx.Merge(m, l.os), l.host)
 	return jsonx.MapStrings(m, a.cfg.expand).(jsonx.Object)
 }
 
 func (a *App) collapseValue(v any) any { return jsonx.MapStrings(v, a.cfg.collapse) }
 
 // applyOps writes local settings changes into the layer that owns each path:
-// the host layer if it defines the path, else the OS layer if it does, else
-// the shared layer. Removals apply to every layer of this device.
+// the most specific layer (device, OS, profiles, shared) that defines it.
+// New paths and new array items go into the device's first profile, or into
+// shared if it has none. Removals apply to every layer of this device.
 func (a *App) applyOps(l *layers, ops []jsonx.Op) {
-	owner := func(path []string, array bool) jsonx.Object {
-		for _, layer := range []jsonx.Object{l.host, l.os} {
-			if array && jsonx.IsArrayAt(layer, path) || !array && jsonx.Has(layer, path) {
-				return layer
-			}
-		}
-		return l.shared
+	specific := append([]jsonx.Object{l.host, l.os}, l.profiles...)
+	target := l.shared
+	if len(l.profiles) > 0 {
+		target = l.profiles[0]
 	}
-	all := []jsonx.Object{l.host, l.os, l.shared}
+	all := append(specific, l.shared)
 	for _, op := range ops {
 		v := a.collapseValue(op.Value)
 		switch op.Kind {
 		case jsonx.OpSet:
-			jsonx.Set(owner(op.Path, false), op.Path, v)
+			owner := target
+			for _, layer := range all {
+				if jsonx.Has(layer, op.Path) {
+					owner = layer
+					break
+				}
+			}
+			jsonx.Set(owner, op.Path, v)
 		case jsonx.OpDelete:
 			for _, layer := range all {
 				jsonx.Delete(layer, op.Path)
 			}
 		case jsonx.OpAdd:
-			jsonx.AddItem(owner(op.Path, true), op.Path, v)
+			owner := target
+			for _, layer := range specific {
+				if jsonx.IsArrayAt(layer, op.Path) {
+					owner = layer
+					break
+				}
+			}
+			jsonx.AddItem(owner, op.Path, v)
 		case jsonx.OpRemove:
 			for _, layer := range all {
 				jsonx.RemoveItem(layer, op.Path, v)

@@ -25,14 +25,17 @@ type InitOptions struct {
 	Create   bool   // create a private GitHub repository with gh first
 	Prefer   string // "repo" or "local": which side wins on the first merge
 	NoPlugin bool   // do not enable the Claude Code plugin
+	Profiles []string
 }
 
 const gitattributes = `# claudesync: keep files byte-identical on every OS
 * -text
 # three-way JSON merge for settings layers
 /shared/settings.json merge=claudesync-json
+/profiles/*/settings.json merge=claudesync-json
 /os/*.json merge=claudesync-json
 /hosts/*.json merge=claudesync-json
+/claudesync.json merge=claudesync-json
 `
 
 const repoReadme = "# Claude Code configuration\n\n" +
@@ -119,6 +122,18 @@ func (a *App) Init(ctx context.Context, opts InitOptions) (*Result, error) {
 		fmt.Fprintln(a.Out, "initialized empty repository layout")
 	}
 
+	if err := a.loadRepoConfig(); err != nil {
+		return nil, err
+	}
+	if len(opts.Profiles) > 0 {
+		ps, err := splitProfiles(opts.Profiles)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.setProfiles(ps); err != nil {
+			return nil, err
+		}
+	}
 	if !opts.NoPlugin {
 		if err := a.enablePlugin(); err != nil {
 			return nil, err
@@ -136,17 +151,29 @@ func jsonMarshalIndent(v any) ([]byte, error) {
 	return append(b, '\n'), err
 }
 
-// enablePlugin adds the claudesync marketplace and plugin to the local
-// settings, so they sync to every device like any other plugin.
+// enablePlugin adds the claudesync marketplace and plugin to the local and
+// the shared settings (not to a profile), so every device gets them.
 func (a *App) enablePlugin() error {
+	set := func(o jsonx.Object) {
+		jsonx.Set(o, []string{"extraKnownMarketplaces", pluginMarketplace}, jsonx.Object{
+			"source": jsonx.Object{"source": "github", "repo": pluginRepo},
+		})
+		jsonx.Set(o, []string{"enabledPlugins", pluginID}, true)
+	}
+	sharedFile := a.repoPath(sharedDir + "/settings.json")
+	shared, err := readObject(sharedFile)
+	if err != nil {
+		return err
+	}
+	set(shared)
+	if err := writeObject(sharedFile, shared, true); err != nil {
+		return err
+	}
 	raw, ls, err := a.readLocalSettings()
 	if err != nil {
 		return err
 	}
-	jsonx.Set(ls, []string{"extraKnownMarketplaces", pluginMarketplace}, jsonx.Object{
-		"source": jsonx.Object{"source": "github", "repo": pluginRepo},
-	})
-	jsonx.Set(ls, []string{"enabledPlugins", pluginID}, true)
+	set(ls)
 	if raw != nil {
 		if old, err := jsonx.Parse(raw); err == nil && jsonx.Equal(old, ls) {
 			return nil
