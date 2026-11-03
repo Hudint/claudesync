@@ -71,7 +71,8 @@ This applies to files (`CLAUDE.md`, skills, agents, …: the highest layer that 
 file provides it) and to `settings.json` (merged key by key).
 
 ```sh
-claudesync init --repo you/claude-config --profile work   # or later:
+claudesync init --repo you/claude-config                  # joins the profile "default"
+claudesync init --repo you/claude-config --profile work   # or another one; later:
 claudesync profile use work            # this device joins "work"
 claudesync profile use work,linux      # several profiles; the first wins
 claudesync profile use --none          # back to shared only
@@ -89,7 +90,8 @@ claudesync move CLAUDE.md --to personal           # only personal devices get it
 claudesync move permissions.defaultMode --to work # settings keys work too
 ```
 
-When a device switches profiles, files that only belonged to the old profile are removed
+Every device starts in the profile `default`, so with a single context you never need
+to think about profiles; add more when you need them. When a device switches profiles, files that only belonged to the old profile are removed
 locally (backed up first) and the new profile is applied. With no profile, everything goes
 into `shared`, exactly as before.
 

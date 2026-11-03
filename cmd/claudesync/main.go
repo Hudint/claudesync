@@ -93,7 +93,7 @@ func main() {
 		prefer := fs.String("prefer", "repo", "which side wins where both have a value: repo or local")
 		host := fs.String("host", "", "name of this device (default: hostname)")
 		noPlugin := fs.Bool("no-plugin", false, "do not enable the claudesync Claude Code plugin")
-		profile := fs.String("profile", "", "comma-separated profiles for this device (first wins)")
+		profile := fs.String("profile", "default", "comma-separated profiles for this device (first wins); \"\" for none")
 		fs.Parse(args)
 		if *host != "" {
 			cfg.Host = app.SanitizeHost(*host)
