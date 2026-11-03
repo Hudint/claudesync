@@ -14,6 +14,10 @@ Remove-Item $zip
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (($userPath -split ";") -notcontains $dir) {
   [Environment]::SetEnvironmentVariable("Path", "$userPath;$dir", "User")
-  Write-Host "added $dir to your PATH (open a new terminal)"
+  Write-Host "added $dir to your PATH"
 }
+# Make claudesync usable in this window too, not only in new ones.
+if (($env:Path -split ";") -notcontains $dir) { $env:Path += ";$dir" }
 Write-Host "installed $dir\claudesync.exe"
+& (Join-Path $dir "claudesync.exe") version
+Write-Host "restart Claude Code so its hooks find claudesync"
